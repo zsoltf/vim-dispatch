@@ -48,7 +48,6 @@ endfunction
 function! s:expand(string) abort
   let slashes = len(matchstr(a:string, '^\%(\\\\\)*'))
   sandbox let v = repeat('\', slashes/2) . expand(a:string[slashes : -1])
-  echomsg v
   return v
 endfunction
 
@@ -627,6 +626,121 @@ function! dispatch#compile_command(bang, args, count) abort
 endfunction
 
 " }}}1
+" :Read {{{1
+function! dispatch#read_command(bang, args, count) abort
+  if !empty(a:args)
+    let args = a:args
+  else
+    let args = '_'
+    for vars in a:count < 0 ? [b:, g:, t:, w:] : [b:]
+      if has_key(vars, 'dispatch') && type(vars.dispatch) == type('')
+        let args = vars.dispatch
+      endif
+    endfor
+  endif
+
+  if args =~# '^!'
+    return 'Start' . (a:bang ? '!' : '') . ' ' . args[1:-1]
+  endif
+
+  let args = s:expand_lnum(args, a:count < 0 ? 0 : a:count)
+
+  let [args, request] = s:extract_opts(args)
+
+  if args =~# '^:\S'
+    return s:wrapcd(get(request, 'directory', getcwd()),
+          \ (a:count > 0 ? a:count : '').substitute(args[1:-1], '\>', (a:bang ? '!' : ''), ''))
+  endif
+
+  let executable = matchstr(args, '\S\+')
+
+  call extend(request, {
+        \ 'action': 'make',
+        \ 'background': a:bang,
+        \ 'format': '%+I%.%#'
+        \ }, 'keep')
+
+  if executable ==# '_'
+    let request.args = matchstr(args, '_\s*\zs.*')
+    let request.program = &makeprg
+    if &makeprg =~# '\$\*'
+      let request.command = substitute(&makeprg, '\$\*', request.args, 'g')
+    elseif empty(request.args)
+      let request.command = &makeprg
+    else
+      let request.command = &makeprg . ' ' . request.args
+    endif
+    let request.format = &errorformat
+    let request.compiler = s:current_compiler()
+  else
+    let request.compiler = get(request, 'compiler', dispatch#compiler_for_program(args))
+    if !empty(request.compiler)
+      call extend(request,dispatch#compiler_options(request.compiler))
+    endif
+    let request.command = args
+  endif
+  let request.format = substitute(request.format, ',%-G%\.%#\%($\|,\@=\)', '', '')
+
+  if empty(request.compiler)
+    unlet request.compiler
+  endif
+  let request.title = get(request, 'title', get(request, 'compiler', 'read'))
+
+  if &autowrite || &autowriteall
+    silent! wall
+  endif
+  cclose
+  let request.file = tempname()
+  let &errorfile = request.file
+
+  let efm = &l:efm
+  let makeprg = &l:makeprg
+  let compiler = get(b:, 'current_compiler', '')
+  let modelines = &modelines
+  let after = ''
+  let cd = exists('*haslocaldir') && haslocaldir() ? 'lcd' : 'cd'
+  try
+    let &modelines = 0
+    call s:set_current_compiler(get(request, 'compiler', ''))
+    let &l:efm = request.format
+    let &l:makeprg = request.command
+    "silent doautocmd QuickFixCmdPre dispatch-make
+    let request.directory = get(request, 'directory', getcwd())
+    if request.directory !=# getcwd()
+      let cwd = getcwd()
+      execute cd fnameescape(request.directory)
+    endif
+    let request.expanded = get(request, 'expanded', dispatch#expand(request.command))
+    call extend(s:makes, [request])
+    let request.id = len(s:makes)
+    let s:files[request.file] = request
+
+    if !s:dispatch(request)
+      let after = 'call dispatch#complete('.request.id.')'
+      redraw!
+      let sp = dispatch#shellpipe(request.file)
+      let dest = request.file . '.complete'
+      if &shellxquote ==# '"'
+        silent execute '!' . request.command sp '& echo \%ERRORLEVEL\% >' dest
+      else
+        silent execute '!(' . request.command . '; echo $? > ' . dest . ')' sp
+      endif
+      redraw!
+    endif
+  finally
+    "silent doautocmd QuickFixCmdPost dispatch-make
+    let &modelines = modelines
+    let &l:efm = efm
+    let &l:makeprg = makeprg
+    call s:set_current_compiler(compiler)
+    if exists('cwd')
+      execute cd fnameescape(cwd)
+    endif
+  endtry
+  execute after
+  return ''
+endfunction
+" }}}1
 " :FocusDispatch {{{1
 
 function! dispatch#focus(...) abort
@@ -783,8 +897,11 @@ function! dispatch#complete(file) abort
   if !dispatch#completed(a:file)
     let request = s:request(a:file)
     let request.completed = 1
-    echo 'Finished:' request.command
-    if !request.background
+    echom 'Finished:' request.command
+    if request.title ==# 'read'
+      call dispatch#new_window(request.file)
+      redraw
+    elseif !request.background
       call s:cgetfile(request, 0, 0)
       redraw
     endif
@@ -862,3 +979,26 @@ function! s:open_quickfix(request, copen) abort
 endfunction
 
 " }}}1
+" New window {{{
+
+function! dispatch#new_window(tmpfile) abort
+  if expand('%') !=# 'Read'
+    normal! Hmx``
+    split Read
+  endif
+  normal! ggdG
+  if expand('%') ==# 'Read'
+    wincmd p
+    normal! `xzt``
+    wincmd p
+  endif
+  setlocal buftype=nofile
+  setlocal bufhidden=hide
+  setlocal nolist
+  wincmd J
+  nnoremap <buffer> <silent> q :close<CR>\|zz
+  put! =readfile(a:tmpfile)
+  normal! gg
+endfunction
+
+" }}}

@@ -8,6 +8,10 @@ if exists("g:loaded_dispatch") || v:version < 700 || &cp
 endif
 let g:loaded_dispatch = 1
 
+command! -bang -nargs=* -range=0 -complete=customlist,dispatch#command_complete Read
+      \ execute dispatch#read_command(<bang>0, <q-args>,
+      \   <line1> && !<count> ? -1 : <line1> == <line2> ? <count> : 0)
+
 command! -bang -nargs=* -range=0 -complete=customlist,dispatch#command_complete Dispatch
       \ execute dispatch#compile_command(<bang>0, <q-args>,
       \   <line1> && !<count> ? -1 : <line1> == <line2> ? <count> : 0)
