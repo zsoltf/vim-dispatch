@@ -158,12 +158,7 @@ function! dispatch#prepare_start(request, ...) abort
   let callback = dispatch#callback(a:request)
   let after = 'rm -f ' . a:request.file . '.pid' .
         \ (empty(callback) ? '' : '; ' . callback)
-  if &shellpipe =~# '2>&1'
-    return 'trap : INT; trap ' . shellescape(after) . ' EXIT; ' . exec
-  else
-    " csh
-    return exec . '; ' . after
-  endif
+  return exec . '; ' . after
 endfunction
 
 function! dispatch#prepare_make(request, ...) abort
@@ -897,7 +892,19 @@ function! dispatch#complete(file) abort
   if !dispatch#completed(a:file)
     let request = s:request(a:file)
     let request.completed = 1
-    echom 'Finished:' request.command
+    try
+      let status = readfile(request.file . '.complete', 1)[0]
+    catch
+      let status = -1
+    endtry
+    if status > 0
+      let label = 'Failure:'
+    elseif status == 0
+      let label = 'Success:'
+    else
+      let label = 'Complete:'
+    endif
+    echom label request.command
     if request.title ==# 'read'
       call dispatch#new_window(request.file)
       redraw
