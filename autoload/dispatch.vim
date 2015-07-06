@@ -209,7 +209,7 @@ function! s:dispatch(request) abort
   for handler in g:dispatch_handlers
     let response = call('dispatch#'.handler.'#handle', [a:request])
     if !empty(response)
-      redraw
+      "redraw
       let a:request.handler = handler
       let pid = dispatch#pid(a:request)
       echo ':!'.a:request.expanded .
@@ -651,7 +651,7 @@ function! dispatch#read_command(bang, args, count) abort
 
   call extend(request, {
         \ 'action': 'make',
-        \ 'background': a:bang,
+        \ 'background': 0,
         \ 'format': '%+I%.%#'
         \ }, 'keep')
 
@@ -679,14 +679,14 @@ function! dispatch#read_command(bang, args, count) abort
   if empty(request.compiler)
     unlet request.compiler
   endif
-  let request.title = get(request, 'title', get(request, 'compiler', 'read'))
+  let request.title = get(request, 'title', get(request, 'compiler', a:bang ? 'read!' : 'read'))
 
   if &autowrite || &autowriteall
     silent! wall
   endif
   cclose
   let request.file = tempname()
-  let &errorfile = request.file
+  "let &errorfile = request.file
 
   let efm = &l:efm
   let makeprg = &l:makeprg
@@ -712,7 +712,7 @@ function! dispatch#read_command(bang, args, count) abort
 
     if !s:dispatch(request)
       let after = 'call dispatch#complete('.request.id.')'
-      redraw!
+      "redraw!
       let sp = dispatch#shellpipe(request.file)
       let dest = request.file . '.complete'
       if &shellxquote ==# '"'
@@ -720,7 +720,7 @@ function! dispatch#read_command(bang, args, count) abort
       else
         silent execute '!(' . request.command . '; echo $? > ' . dest . ')' sp
       endif
-      redraw!
+      "redraw!
     endif
   finally
     "silent doautocmd QuickFixCmdPost dispatch-make
@@ -905,9 +905,10 @@ function! dispatch#complete(file) abort
       let label = 'Complete:'
     endif
     echom label request.command
-    if request.title ==# 'read'
+    if request.title ==# 'read!'
       call dispatch#new_window(request.file)
-      redraw
+    elseif request.title ==# 'read'
+      silent! put! =readfile(request.file)
     elseif !request.background
       call s:cgetfile(request, 0, 0)
       redraw
@@ -990,22 +991,15 @@ endfunction
 
 function! dispatch#new_window(tmpfile) abort
   if expand('%') !=# 'Read'
-    normal! Hmx``
-    split Read
+    silent! split Read
+    silent! wincmd o
   endif
-  normal! ggdG
-  if expand('%') ==# 'Read'
-    wincmd p
-    normal! `xzt``
-    wincmd p
-  endif
-  setlocal buftype=nofile
-  setlocal bufhidden=hide
-  setlocal nolist
-  wincmd J
-  nnoremap <buffer> <silent> q :close<CR>\|zz
-  put! =readfile(a:tmpfile)
-  normal! gg
+  setlocal buftype=nofile bufhidden=hide nolist
+  nnoremap <buffer> <silent> q :bd!<CR>\|zz
+  silent! normal! ggdG
+  silent! wincmd J
+  silent! put! =readfile(a:tmpfile)
+  silent! normal! gg
 endfunction
 
 " }}}
